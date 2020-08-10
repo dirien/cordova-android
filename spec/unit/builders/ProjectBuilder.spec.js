@@ -17,9 +17,8 @@
     under the License.
 */
 
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
-const Q = require('q');
 const rewire = require('rewire');
 
 const CordovaError = require('cordova-common').CordovaError;
@@ -29,12 +28,12 @@ describe('ProjectBuilder', () => {
 
     let builder;
     let ProjectBuilder;
-    let spawnSpy;
+    let execaSpy;
 
     beforeEach(() => {
-        spawnSpy = jasmine.createSpy('spawn').and.returnValue(Q.defer().promise);
+        execaSpy = jasmine.createSpy('execa').and.returnValue(new Promise(() => {}));
         ProjectBuilder = rewire('../../../bin/templates/cordova/lib/builders/ProjectBuilder');
-        ProjectBuilder.__set__('spawn', spawnSpy);
+        ProjectBuilder.__set__('execa', execaSpy);
 
         builder = new ProjectBuilder(rootDir);
     });
@@ -114,19 +113,36 @@ describe('ProjectBuilder', () => {
             });
             expect(args[0]).toBe('clean');
         });
+
+        describe('should accept extra arguments', () => {
+            it('apk', () => {
+                const args = builder.getArgs('debug', {
+                    extraArgs: ['-PcdvVersionCode=12344']
+                });
+                expect(args).toContain('-PcdvVersionCode=12344');
+            });
+
+            it('bundle', () => {
+                const args = builder.getArgs('debug', {
+                    packageType: 'bundle',
+                    extraArgs: ['-PcdvVersionCode=12344']
+                });
+                expect(args).toContain('-PcdvVersionCode=12344');
+            });
+        });
     });
 
     describe('runGradleWrapper', () => {
         it('should run the provided gradle command if a gradle wrapper does not already exist', () => {
             spyOn(fs, 'existsSync').and.returnValue(false);
             builder.runGradleWrapper('/my/sweet/gradle');
-            expect(spawnSpy).toHaveBeenCalledWith('/my/sweet/gradle', jasmine.any(Array), jasmine.any(Object));
+            expect(execaSpy).toHaveBeenCalledWith('/my/sweet/gradle', jasmine.any(Array), jasmine.any(Object));
         });
 
         it('should do nothing if a gradle wrapper exists in the project directory', () => {
             spyOn(fs, 'existsSync').and.returnValue(true);
             builder.runGradleWrapper('/my/sweet/gradle');
-            expect(spawnSpy).not.toHaveBeenCalledWith('/my/sweet/gradle', jasmine.any(Array), jasmine.any(Object));
+            expect(execaSpy).not.toHaveBeenCalledWith('/my/sweet/gradle', jasmine.any(Array), jasmine.any(Object));
         });
     });
 
@@ -182,54 +198,54 @@ describe('ProjectBuilder', () => {
 
             builder.build({});
 
-            expect(spawnSpy).toHaveBeenCalledWith(path.join(rootDir, 'gradlew'), testArgs, jasmine.anything());
+            expect(execaSpy).toHaveBeenCalledWith(path.join(rootDir, 'gradlew'), testArgs, jasmine.anything());
         });
 
         it('should reject if the spawn fails', () => {
-            const errorMessage = 'ERROR: Failed to spawn';
-            spawnSpy.and.returnValue(Q.reject(errorMessage));
+            const errorMessage = 'Test error';
+            execaSpy.and.rejectWith(new Error(errorMessage));
 
             return builder.build({}).then(
                 () => fail('Unexpectedly resolved'),
-                err => {
-                    expect(err).toBe(errorMessage);
+                error => {
+                    expect(error.message).toBe(errorMessage);
                 }
             );
         });
 
         it('should check the Android target if failed to find target', () => {
             const checkReqsSpy = jasmine.createSpyObj('check_reqs', ['check_android_target']);
-            const errorMessage = 'ERROR: failed to find target with hash string';
+            const testError = 'failed to find target with hash string';
 
             ProjectBuilder.__set__('check_reqs', checkReqsSpy);
-            checkReqsSpy.check_android_target.and.returnValue(Q.resolve());
-            spawnSpy.and.returnValue(Q.reject(errorMessage));
+            checkReqsSpy.check_android_target.and.resolveTo();
+            execaSpy.and.rejectWith(testError);
 
             return builder.build({}).then(
                 () => fail('Unexpectedly resolved'),
-                err => {
-                    expect(checkReqsSpy.check_android_target).toHaveBeenCalledWith(errorMessage);
-                    expect(err).toBe(errorMessage);
+                error => {
+                    expect(checkReqsSpy.check_android_target).toHaveBeenCalledWith(testError);
+                    expect(error).toBe(testError);
                 }
             );
         });
     });
 
     describe('clean', () => {
-        let shellSpy;
-
         beforeEach(() => {
-            shellSpy = jasmine.createSpyObj('shell', ['rm']);
-            ProjectBuilder.__set__('shell', shellSpy);
+            const marker = ProjectBuilder.__get__('MARKER');
+            spyOn(fs, 'readFileSync').and.returnValue(`Some Header Here: ${marker}`);
+            spyOn(fs, 'removeSync');
             spyOn(builder, 'getArgs');
-            spawnSpy.and.returnValue(Promise.resolve());
+            execaSpy.and.returnValue(Promise.resolve());
         });
 
         it('should get arguments for cleaning', () => {
             const opts = {};
-            builder.clean(opts);
 
-            expect(builder.getArgs).toHaveBeenCalledWith('clean', opts);
+            return builder.clean(opts).then(() => {
+                expect(builder.getArgs).toHaveBeenCalledWith('clean', opts);
+            });
         });
 
         it('should spawn gradle', () => {
@@ -238,13 +254,13 @@ describe('ProjectBuilder', () => {
             builder.getArgs.and.returnValue(gradleArgs);
 
             return builder.clean(opts).then(() => {
-                expect(spawnSpy).toHaveBeenCalledWith(path.join(rootDir, 'gradlew'), gradleArgs, jasmine.anything());
+                expect(execaSpy).toHaveBeenCalledWith(path.join(rootDir, 'gradlew'), gradleArgs, jasmine.anything());
             });
         });
 
         it('should remove "out" folder', () => {
             return builder.clean({}).then(() => {
-                expect(shellSpy.rm).toHaveBeenCalledWith('-rf', path.join(rootDir, 'out'));
+                expect(fs.removeSync).toHaveBeenCalledWith(path.join(rootDir, 'out'));
             });
         });
 
@@ -252,13 +268,11 @@ describe('ProjectBuilder', () => {
             const debugSigningFile = path.join(rootDir, 'debug-signing.properties');
             const releaseSigningFile = path.join(rootDir, 'release-signing.properties');
 
-            const isAutoGeneratedSpy = jasmine.createSpy('isAutoGenerated');
-            ProjectBuilder.__set__('isAutoGenerated', isAutoGeneratedSpy);
-            isAutoGeneratedSpy.and.returnValue(true);
+            spyOn(fs, 'existsSync').and.returnValue(true);
 
             return builder.clean({}).then(() => {
-                expect(shellSpy.rm).toHaveBeenCalledWith(jasmine.any(String), debugSigningFile);
-                expect(shellSpy.rm).toHaveBeenCalledWith(jasmine.any(String), releaseSigningFile);
+                expect(fs.removeSync).toHaveBeenCalledWith(debugSigningFile);
+                expect(fs.removeSync).toHaveBeenCalledWith(releaseSigningFile);
             });
         });
 
@@ -266,18 +280,16 @@ describe('ProjectBuilder', () => {
             const debugSigningFile = path.join(rootDir, 'debug-signing.properties');
             const releaseSigningFile = path.join(rootDir, 'release-signing.properties');
 
-            const isAutoGeneratedSpy = jasmine.createSpy('isAutoGenerated');
-            ProjectBuilder.__set__('isAutoGenerated', isAutoGeneratedSpy);
-            isAutoGeneratedSpy.and.returnValue(false);
+            spyOn(fs, 'existsSync').and.returnValue(false);
 
             return builder.clean({}).then(() => {
-                expect(shellSpy.rm).not.toHaveBeenCalledWith(jasmine.any(String), debugSigningFile);
-                expect(shellSpy.rm).not.toHaveBeenCalledWith(jasmine.any(String), releaseSigningFile);
+                expect(fs.removeSync).not.toHaveBeenCalledWith(debugSigningFile);
+                expect(fs.removeSync).not.toHaveBeenCalledWith(releaseSigningFile);
             });
         });
     });
 
-    describe('apkSorter', () => {
+    describe('fileSorter', () => {
         it('should sort APKs from most recent to oldest, deprioritising unsigned arch-specific builds', () => {
             const APKs = {
                 'app-debug.apk': new Date('2018-04-20'),
@@ -292,40 +304,14 @@ describe('ProjectBuilder', () => {
             const expectedResult = ['app-release.apk', 'app-debug.apk', 'app-release-unsigned.apk',
                 'app-release-arm.apk', 'app-release-x86.apk', 'app-debug-x86.apk', 'app-debug-arm.apk'];
 
-            const fsSpy = jasmine.createSpyObj('fs', ['statSync']);
-            fsSpy.statSync.and.callFake(filename => {
+            spyOn(fs, 'statSync').and.callFake(filename => {
                 return { mtime: APKs[filename] };
             });
-            ProjectBuilder.__set__('fs', fsSpy);
 
             const apkArray = Object.keys(APKs);
-            const sortedApks = apkArray.sort(ProjectBuilder.__get__('apkSorter'));
+            const sortedApks = apkArray.sort(ProjectBuilder.__get__('fileSorter'));
 
             expect(sortedApks).toEqual(expectedResult);
-        });
-    });
-
-    describe('isAutoGenerated', () => {
-        let fsSpy;
-
-        beforeEach(() => {
-            fsSpy = jasmine.createSpyObj('fs', ['existsSync', 'readFileSync']);
-            fsSpy.existsSync.and.returnValue(true);
-            ProjectBuilder.__set__('fs', fsSpy);
-        });
-
-        it('should return true if the file contains the autogenerated marker', () => {
-            const fileContents = `# DO NOT MODIFY - YOUR CHANGES WILL BE ERASED!`;
-            fsSpy.readFileSync.and.returnValue(fileContents);
-
-            expect(ProjectBuilder.__get__('isAutoGenerated')()).toBe(true);
-        });
-
-        it('should return false if the file does not contain the autogenerated marker', () => {
-            const fileContents = `# My modified file`;
-            fsSpy.readFileSync.and.returnValue(fileContents);
-
-            expect(ProjectBuilder.__get__('isAutoGenerated')()).toBe(false);
         });
     });
 });

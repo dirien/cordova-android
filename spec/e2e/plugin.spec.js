@@ -18,10 +18,10 @@
  */
 
 const os = require('os');
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
-const shell = require('shelljs');
-const { PluginInfoProvider, superspawn } = require('cordova-common');
+const execa = require('execa');
+const { PluginInfoProvider } = require('cordova-common');
 
 const createBin = path.join(__dirname, '../../bin/create');
 const fakePluginPath = path.join(__dirname, 'fixtures/cordova-plugin-fake');
@@ -29,11 +29,11 @@ const fakePluginPath = path.join(__dirname, 'fixtures/cordova-plugin-fake');
 describe('plugin add', function () {
     let tmpDir;
     beforeEach(() => {
-        const tmpDirTemplate = path.join(os.tmpdir(), `cordova-android-test-`);
+        const tmpDirTemplate = path.join(os.tmpdir(), 'cordova-android-test-');
         tmpDir = fs.realpathSync(fs.mkdtempSync(tmpDirTemplate));
     });
     afterEach(() => {
-        shell.rm('-rf', tmpDir);
+        fs.removeSync(tmpDir);
     });
 
     it('Test#001 : create project and add a plugin with framework', function () {
@@ -44,7 +44,7 @@ describe('plugin add', function () {
         const pluginInfo = new PluginInfoProvider().get(fakePluginPath);
 
         return Promise.resolve()
-            .then(() => superspawn.spawn(createBin, [projectPath, projectid, projectname]))
+            .then(() => execa(createBin, [projectPath, projectid, projectname]))
             .then(() => {
                 const Api = require(path.join(projectPath, 'cordova/Api.js'));
                 return new Api('android', projectPath).addPlugin(pluginInfo);

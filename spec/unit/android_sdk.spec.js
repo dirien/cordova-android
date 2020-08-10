@@ -17,28 +17,37 @@
     under the License.
 */
 
-const superspawn = require('cordova-common').superspawn;
 const fs = require('fs');
 const path = require('path');
 const rewire = require('rewire');
 
 describe('android_sdk', () => {
     let android_sdk;
+    let execaSpy;
 
     beforeEach(() => {
         android_sdk = rewire('../../bin/templates/cordova/lib/android_sdk');
+        execaSpy = jasmine.createSpy('execa');
+        android_sdk.__set__('execa', execaSpy);
     });
 
     describe('sort_by_largest_numerical_suffix', () => {
         it('should return the newest version first', () => {
-            const ids = ['android-24', 'android-19', 'android-27', 'android-23'];
-            const sortedIds = ['android-27', 'android-24', 'android-23', 'android-19'];
+            const ids = ['android-P', 'android-24', 'android-19', 'android-27', 'android-23'];
+            const sortedIds = ['android-27', 'android-24', 'android-23', 'android-19', 'android-P'];
             expect(ids.sort(android_sdk.__get__('sort_by_largest_numerical_suffix'))).toEqual(sortedIds);
         });
 
-        it('should return 0 (no sort) if one of the versions has no number', () => {
-            const ids = ['android-27', 'android-P'];
-            expect(android_sdk.__get__('sort_by_largest_numerical_suffix')(ids[0], ids[1])).toBe(0);
+        describe('should return release version over preview versions', () => {
+            it('Test #001', () => {
+                const ids = ['android-27', 'android-P'];
+                expect(android_sdk.__get__('sort_by_largest_numerical_suffix')(ids[0], ids[1])).toBe(-1);
+            });
+
+            it('Test #002', () => {
+                const ids = ['android-P', 'android-27'];
+                expect(android_sdk.__get__('sort_by_largest_numerical_suffix')(ids[0], ids[1])).toBe(1);
+            });
         });
     });
 
@@ -59,17 +68,17 @@ describe('android_sdk', () => {
 
     describe('list_targets_with_android', () => {
         it('should invoke `android` with the `list target` command and _not_ the `list targets` command, as the plural form is not supported in some Android SDK Tools versions', () => {
-            spyOn(superspawn, 'spawn').and.returnValue(new Promise(() => {}, () => {}));
+            execaSpy.and.returnValue(Promise.resolve({ stdout: '' }));
             android_sdk.list_targets_with_android();
-            expect(superspawn.spawn).toHaveBeenCalledWith('android', ['list', 'target']);
+            expect(execaSpy).toHaveBeenCalledWith('android', ['list', 'target']);
         });
 
         it('should parse and return results from `android list targets` command', () => {
             const testTargets = fs.readFileSync(path.join('spec', 'fixtures', 'sdk25.2-android_list_targets.txt'), 'utf-8');
-            spyOn(superspawn, 'spawn').and.returnValue(Promise.resolve(testTargets));
+            execaSpy.and.returnValue(Promise.resolve({ stdout: testTargets }));
 
             return android_sdk.list_targets_with_android().then(list => {
-                [ 'Google Inc.:Google APIs:23',
+                ['Google Inc.:Google APIs:23',
                     'Google Inc.:Google APIs:22',
                     'Google Inc.:Google APIs:21',
                     'android-25',
@@ -79,7 +88,7 @@ describe('android_sdk', () => {
                     'android-MNC',
                     'android-22',
                     'android-21',
-                    'android-20' ].forEach((target) => expect(list).toContain(target));
+                    'android-20'].forEach((target) => expect(list).toContain(target));
             });
         });
     });
@@ -87,7 +96,7 @@ describe('android_sdk', () => {
     describe('list_targets_with_avdmanager', () => {
         it('should parse and return results from `avdmanager list target` command', () => {
             const testTargets = fs.readFileSync(path.join('spec', 'fixtures', 'sdk25.3-avdmanager_list_target.txt'), 'utf-8');
-            spyOn(superspawn, 'spawn').and.returnValue(Promise.resolve(testTargets));
+            execaSpy.and.returnValue(Promise.resolve({ stdout: testTargets }));
 
             return android_sdk.list_targets_with_avdmanager().then(list => {
                 expect(list).toContain('android-25');

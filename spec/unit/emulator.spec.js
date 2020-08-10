@@ -17,14 +17,13 @@
     under the License.
 */
 
-const fs = require('fs');
+const fs = require('fs-extra');
 const path = require('path');
 const rewire = require('rewire');
-const shelljs = require('shelljs');
+const which = require('which');
 
 const CordovaError = require('cordova-common').CordovaError;
 const check_reqs = require('../../bin/templates/cordova/lib/check_reqs');
-const superspawn = require('cordova-common').superspawn;
 
 describe('emulator', () => {
     const EMULATOR_LIST = ['emulator-5555', 'emulator-5556', 'emulator-5557'];
@@ -37,7 +36,9 @@ describe('emulator', () => {
     describe('list_images_using_avdmanager', () => {
         it('should properly parse details of SDK Tools 25.3.1 `avdmanager` output', () => {
             const avdList = fs.readFileSync(path.join('spec', 'fixtures', 'sdk25.3-avdmanager_list_avd.txt'), 'utf-8');
-            spyOn(superspawn, 'spawn').and.returnValue(Promise.resolve(avdList));
+
+            const execaSpy = jasmine.createSpy('execa').and.returnValue(Promise.resolve({ stdout: avdList }));
+            emu.__set__('execa', execaSpy);
 
             return emu.list_images_using_avdmanager().then(list => {
                 expect(list).toBeDefined();
@@ -51,14 +52,18 @@ describe('emulator', () => {
 
     describe('list_images_using_android', () => {
         it('should invoke `android` with the `list avd` command and _not_ the `list avds` command, as the plural form is not supported in some Android SDK Tools versions', () => {
-            spyOn(superspawn, 'spawn').and.returnValue(new Promise(() => {}, () => {}));
+            const execaSpy = jasmine.createSpy('execa').and.returnValue(Promise.resolve({ stdout: '' }));
+            emu.__set__('execa', execaSpy);
+
             emu.list_images_using_android();
-            expect(superspawn.spawn).toHaveBeenCalledWith('android', ['list', 'avd']);
+            expect(execaSpy).toHaveBeenCalledWith('android', ['list', 'avd']);
         });
 
         it('should properly parse details of SDK Tools pre-25.3.1 `android list avd` output', () => {
             const avdList = fs.readFileSync(path.join('spec', 'fixtures', 'sdk25.2-android_list_avd.txt'), 'utf-8');
-            spyOn(superspawn, 'spawn').and.returnValue(Promise.resolve(avdList));
+
+            const execaSpy = jasmine.createSpy('execa').and.returnValue(Promise.resolve({ stdout: avdList }));
+            emu.__set__('execa', execaSpy);
 
             return emu.list_images_using_android().then(list => {
                 expect(list).toBeDefined();
@@ -78,7 +83,7 @@ describe('emulator', () => {
         });
 
         it('should try to parse AVD information using `avdmanager` first', () => {
-            spyOn(shelljs, 'which').and.callFake(cmd => cmd === 'avdmanager');
+            spyOn(which, 'sync').and.callFake(cmd => cmd === 'avdmanager');
 
             const avdmanager_spy = spyOn(emu, 'list_images_using_avdmanager').and.returnValue(Promise.resolve([]));
 
@@ -88,7 +93,7 @@ describe('emulator', () => {
         });
 
         it('should delegate to `android` if `avdmanager` cant be found and `android` can', () => {
-            spyOn(shelljs, 'which').and.callFake(cmd => cmd !== 'avdmanager');
+            spyOn(which, 'sync').and.callFake(cmd => cmd !== 'avdmanager');
 
             const android_spy = spyOn(emu, 'list_images_using_android').and.returnValue(Promise.resolve([]));
 
@@ -98,7 +103,7 @@ describe('emulator', () => {
         });
 
         it('should correct api level information and fill in the blanks about api level if exists', () => {
-            spyOn(shelljs, 'which').and.callFake(cmd => cmd === 'avdmanager');
+            spyOn(which, 'sync').and.callFake(cmd => cmd === 'avdmanager');
             spyOn(emu, 'list_images_using_avdmanager').and.returnValue(Promise.resolve([
                 {
                     name: 'Pixel_7.0',
@@ -122,7 +127,7 @@ describe('emulator', () => {
         });
 
         it('should throw an error if neither `avdmanager` nor `android` are able to be found', () => {
-            spyOn(shelljs, 'which').and.returnValue(false);
+            spyOn(which, 'sync').and.returnValue(false);
 
             return emu.list_images().then(
                 () => fail('Unexpectedly resolved'),
@@ -249,8 +254,8 @@ describe('emulator', () => {
         let emulator;
         let AdbSpy;
         let checkReqsSpy;
-        let childProcessSpy;
-        let shellJsSpy;
+        let execaSpy;
+        let whichSpy;
 
         beforeEach(() => {
             emulator = {
@@ -268,9 +273,10 @@ describe('emulator', () => {
             checkReqsSpy = jasmine.createSpyObj('create_reqs', ['getAbsoluteAndroidCmd']);
             emu.__set__('check_reqs', checkReqsSpy);
 
-            childProcessSpy = jasmine.createSpyObj('child_process', ['spawn']);
-            childProcessSpy.spawn.and.returnValue(jasmine.createSpyObj('spawnFns', ['unref']));
-            emu.__set__('child_process', childProcessSpy);
+            execaSpy = jasmine.createSpy('execa').and.returnValue(
+                jasmine.createSpyObj('spawnFns', ['unref'])
+            );
+            emu.__set__('execa', execaSpy);
 
             spyOn(emu, 'get_available_port').and.returnValue(Promise.resolve(port));
             spyOn(emu, 'wait_for_emulator').and.returnValue(Promise.resolve('randomname'));
@@ -280,9 +286,9 @@ describe('emulator', () => {
             const proc = emu.__get__('process');
             spyOn(proc.stdout, 'write').and.stub();
 
-            shellJsSpy = jasmine.createSpyObj('shelljs', ['which']);
-            shellJsSpy.which.and.returnValue('/dev/android-sdk/tools');
-            emu.__set__('shelljs', shellJsSpy);
+            whichSpy = jasmine.createSpyObj('which', ['sync']);
+            whichSpy.sync.and.returnValue('/dev/android-sdk/tools');
+            emu.__set__('which', whichSpy);
         });
 
         it('should find an emulator if an id is not specified', () => {
@@ -291,7 +297,7 @@ describe('emulator', () => {
             return emu.start().then(() => {
                 // This is the earliest part in the code where we can hook in and check
                 // the emulator that has been selected.
-                const spawnArgs = childProcessSpy.spawn.calls.argsFor(0);
+                const spawnArgs = execaSpy.calls.argsFor(0);
                 expect(spawnArgs[1]).toContain(emulator.name);
             });
         });
@@ -302,7 +308,7 @@ describe('emulator', () => {
             return emu.start(emulator.name).then(() => {
                 expect(emu.best_image).not.toHaveBeenCalled();
 
-                const spawnArgs = childProcessSpy.spawn.calls.argsFor(0);
+                const spawnArgs = execaSpy.calls.argsFor(0);
                 expect(spawnArgs[1]).toContain(emulator.name);
             });
         });
@@ -446,7 +452,7 @@ describe('emulator', () => {
         it('should resolve with true if the system has booted', () => {
             AdbSpy.shell.and.callFake((emuId, shellArgs) => {
                 expect(emuId).toBe(emulatorId);
-                expect(shellArgs).toContain('ps');
+                expect(shellArgs).toContain('getprop sys.boot_completed');
 
                 return Promise.resolve(psOutput);
             });
@@ -576,7 +582,7 @@ describe('emulator', () => {
         let AndroidManifestGetActivitySpy;
         let AdbSpy;
         let buildSpy;
-        let childProcessSpy;
+        let execaSpy;
         let target;
 
         beforeEach(() => {
@@ -597,9 +603,8 @@ describe('emulator', () => {
             AdbSpy.uninstall.and.returnValue(Promise.resolve());
             emu.__set__('Adb', AdbSpy);
 
-            childProcessSpy = jasmine.createSpyObj('child_process', ['exec']);
-            childProcessSpy.exec.and.callFake((cmd, opts, callback) => callback());
-            emu.__set__('child_process', childProcessSpy);
+            execaSpy = jasmine.createSpy('execa').and.resolveTo({});
+            emu.__set__('execa', execaSpy);
         });
 
         it('should get the full target object if only id is specified', () => {
@@ -613,7 +618,7 @@ describe('emulator', () => {
 
         it('should install to the passed target', () => {
             return emu.install(target, {}).then(() => {
-                const execCmd = childProcessSpy.exec.calls.argsFor(0)[0];
+                const execCmd = execaSpy.calls.argsFor(0)[1].join(' ');
                 expect(execCmd).toContain(`-s ${target.target} install`);
             });
         });
@@ -631,33 +636,26 @@ describe('emulator', () => {
             return emu.install(target, buildResults).then(() => {
                 expect(buildSpy.findBestApkForArchitecture).toHaveBeenCalledWith(buildResults, target.arch);
 
-                const execCmd = childProcessSpy.exec.calls.argsFor(0)[0];
-                expect(execCmd).toMatch(new RegExp(`install.*${apkPath}`));
+                const execCmd = execaSpy.calls.argsFor(0)[1].join(' ');
+                expect(execCmd).toContain(`install -r ${apkPath}`);
             });
         });
 
         it('should uninstall and reinstall app if failure is due to different certificates', () => {
-            let execAlreadyCalled;
-            childProcessSpy.exec.and.callFake((cmd, opts, callback) => {
-                if (!execAlreadyCalled) {
-                    execAlreadyCalled = true;
-                    callback(null, 'Failure: INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES');
-                } else {
-                    callback();
-                }
-            });
+            execaSpy.and.returnValues(
+                ...['Failure: INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES', '']
+                    .map(out => Promise.resolve({ stdout: out }))
+            );
 
             return emu.install(target, {}).then(() => {
-                expect(childProcessSpy.exec).toHaveBeenCalledTimes(2);
+                expect(execaSpy).toHaveBeenCalledTimes(2);
                 expect(AdbSpy.uninstall).toHaveBeenCalled();
             });
         });
 
         it('should throw any error not caused by different certificates', () => {
             const errorMsg = 'Failure: Failed to install';
-            childProcessSpy.exec.and.callFake((cmd, opts, callback) => {
-                callback(null, errorMsg);
-            });
+            execaSpy.and.resolveTo({ stdout: errorMsg });
 
             return emu.install(target, {}).then(
                 () => fail('Unexpectedly resolved'),

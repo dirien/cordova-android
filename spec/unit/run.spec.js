@@ -18,6 +18,7 @@
 */
 
 const rewire = require('rewire');
+const builders = require('../../bin/templates/cordova/lib/builders/builders');
 
 describe('run', () => {
     let run;
@@ -58,6 +59,11 @@ describe('run', () => {
                 emulator: emulatorSpyObj,
                 events: eventsSpyObj,
                 getInstallTarget: getInstallTargetSpy
+            });
+
+            // run needs `this` to behave like an Api instance
+            run.run = run.run.bind({
+                _builder: builders.getBuilder('FakeRootPath')
             });
         });
 
@@ -171,7 +177,7 @@ describe('run', () => {
 
             return run.run().then(
                 () => fail('Expected error to be thrown'),
-                err => expect(err).toContain(target)
+                err => expect(err.message).toContain(target)
             );
         });
 
